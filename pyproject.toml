@@ -1,12 +1,13 @@
 [project]
-name = "lmms-mcp"
+name = "lmms-mcp-pro"
 version = "0.1.0"
-description = "MCP Server for LMMS - AI-powered music production with LMMS"
+description = "Extended fork of LMMS MCP: extra tools, fixes and workflow tweaks for composing, mixing and rendering LMMS projects with Claude."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    { name = "TypeWolf" },
+    { name = "TypeWolf" },          # original LMMS MCP
+    { name = "San Milano" },        # LMMS MCP Pro fork
 ]
 keywords = ["mcp", "lmms", "music", "daw", "ai", "model-context-protocol"]
 classifiers = [
@@ -31,12 +32,14 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/TypeWolf/lmms-mcp"
-Repository = "https://github.com/TypeWolf/lmms-mcp"
-Issues = "https://github.com/TypeWolf/lmms-mcp/issues"
+Homepage = "https://github.com/oli-the-hermit/lmms-mcp-pro"
+Repository = "https://github.com/oli-the-hermit/lmms-mcp-pro"
+Issues = "https://github.com/oli-the-hermit/lmms-mcp-pro/issues"
+Upstream = "https://github.com/TypeWolf/lmms-mcp"
 
 [project.scripts]
 lmms-mcp = "lmms_mcp.server:main"
+lmms-mcp-pro = "lmms_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]

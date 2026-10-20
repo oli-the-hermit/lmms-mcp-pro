@@ -1,4 +1,37 @@
-# LMMS MCP Server
+# LMMS MCP Pro
+
+Extended fork of [LMMS MCP](https://github.com/TypeWolf/lmms-mcp): extra tools, fixes and workflow
+tweaks for composing, mixing and rendering [LMMS](https://lmms.io/) projects with Claude.
+
+The Python package is still `lmms_mcp`, so upstream changes merge cleanly.
+
+## Install on Windows (Claude desktop app: Chat + Code)
+
+Needs Python 3.10+ (python.org, "Add python.exe to PATH") and LMMS.
+
+```powershell
+cd path\to\lmms-mcp-pro
+powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
+```
+
+The script:
+
+1. creates `.venv` and installs this repo in **editable** mode, so code changes apply the next time Claude starts the server;
+2. finds `lmms.exe` and creates a projects folder (`Documents\lmms\projects\Claude` by default);
+3. runs `scripts\smoke_test.py`, which starts the server over stdio the way Claude does;
+4. **Chat**: adds `lmms-pro` to `claude_desktop_config.json` (a backup is written first);
+5. **Code**: adds `lmms-pro` at user scope (every folder), using `claude mcp add` or, without the CLI, `%USERPROFILE%\.claude.json`.
+
+Then fully quit Claude from the tray icon and reopen it.
+
+Options: `-ProjectsDir "D:\Music\Claude"`, `-LmmsExe "C:\...\lmms.exe"`, `-SkipChat`, `-SkipCode`, `-SkipInstall`, `-Name`.
+To remove it: `powershell -ExecutionPolicy Bypass -File scripts\uninstall-windows.ps1`.
+
+---
+
+*The original LMMS MCP documentation follows.*
+
+## LMMS MCP Server (upstream)
 
 An MCP (Model Context Protocol) server for [LMMS](https://lmms.io/) - the free, open-source digital audio workstation. Lets AI agents create, modify, and save LMMS music projects programmatically.
 

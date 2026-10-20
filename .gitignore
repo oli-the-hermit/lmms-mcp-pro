@@ -46,3 +46,10 @@ opencode.json
 # Secrets
 .env
 .env.local
+
+# Machine-specific MCP config snippet
+lmms-pro.mcp-entry.json
+# Machine-specific Claude Code config (absolute paths)
+.mcp.json
+# Local planning notes (same convention as Focus Space)
+documentation/
