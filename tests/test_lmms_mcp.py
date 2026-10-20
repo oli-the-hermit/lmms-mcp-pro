@@ -203,13 +203,14 @@ class TestEffects:
         assert track.find("instrumenttrack/fxchain/effect") is not None
         assert track.find("fxchain") is None
 
-    def test_add_duplicate_effect_raises(self):
-        from lmms_mcp.effects import add_effect
+    def test_same_effect_twice_is_allowed(self):
+        # LMMS allows it (two EQs, two reverbs): address them by position.
+        from lmms_mcp.effects import add_effect, list_effects
         root = self._make_project()
         track = find_tracks(root)[0]
         add_effect(track, "delay")
-        with pytest.raises(ValueError, match="already exists"):
-            add_effect(track, "delay")
+        add_effect(track, "delay")
+        assert [e["position"] for e in list_effects(track)] == [0, 1]
 
     def test_add_unknown_effect_raises(self):
         from lmms_mcp.effects import add_effect
@@ -302,8 +303,12 @@ class TestZynAddSubFX:
         result = embed_zyn_preset(root, 0, self.ZYN_PRESET_XML)
         assert result["preset"] == "TestPatch"
         inst = find_tracks(root)[0].find("instrumenttrack/instrument")
-        data = inst.find("ZynAddSubFX-data")
-        assert data.tag == "ZynAddSubFX-data"
+        # LMMS only gives the plugin its own <zynaddsubfx> element, and Zyn loads it as a
+        # whole master: the preset must sit in MASTER/PART id=0 (verified by rendering).
+        assert inst.find("ZynAddSubFX-data") is None
+        part = inst.find("zynaddsubfx/ZynAddSubFX-data/MASTER/PART[@id='0']")
+        assert part is not None
+        assert part.find("INSTRUMENT") is not None
 
     def test_embed_preset_wrong_instrument(self):
         from lmms_mcp.xml_parser import embed_zyn_preset
@@ -332,7 +337,8 @@ class TestZynAddSubFX:
         )
         assert result["applied"]["filterfreq"] == 100
         inst = find_tracks(root)[0].find("instrumenttrack/instrument")
-        assert inst.get("filterfreq") == "100"
+        assert inst.get("filterfreq") is None          # not on <instrument>...
+        assert inst.find("zynaddsubfx").get("filterfreq") == "100"   # ...on the plugin
 
     def test_set_params_out_of_range_track(self):
         from lmms_mcp.xml_parser import set_instrument_params

@@ -77,13 +77,38 @@ STATIC_PLUGINS = {
     "freeboy",
 }
 
+# XML/plugin name -> DLL names it can have. LMMS 1.2 ships FreeBoy as papu.dll and
+# OpulenZ as opl2.dll (1.3 renamed both); the stk folder builds malletsstk.dll.
 PLUGIN_ALIASES = {
-    "nes": {"nes", "papu", "nescaline"},
-    "papu": {"nes", "papu", "nescaline"},
+    "freeboy": {"freeboy", "papu"},
+    "opulenz": {"opulenz", "opl2"},
+    "nes": {"nes", "nescaline"},
     "malletsstk": {"malletsstk", "stk"},
-    "audiofileprocessor": {"audiofileprocessor"},
     "sf2player": {"sf2player", "fluidsynth"},
-    "opulenz": {"opl2", "opulenz"},  # named OPL2 in LMMS 1.2.x
+}
+
+#: Plugins that only exist in LMMS 1.3 and later.
+LMMS_13_ONLY = {"slicert", "xpressive", "compressor", "dispersion",
+                "frequencyshifter", "slewdistortion"}
+
+#: DLLs in LMMS's plugins folder that are not instruments or effects you add by name.
+PLUGIN_HOSTS = {
+    "carlarack": "Carla Rack instrument (needs Carla installed)",
+    "carlapatchbay": "Carla Patchbay instrument (needs Carla installed)",
+    "ladspaeffect": "LADSPA effect host",
+    "lv2effect": "LV2 effect host",
+    "lv2instrument": "LV2 instrument host",
+    "vsteffect": "VST effect host",
+    "vestige": "VST instrument host (use add_vst_track)",
+}
+EXTRA_EFFECTS = {
+    "spectrumanalyzer": "Spectrum analyzer (display only)",
+    "peakcontrollereffect": "Peak controller (drives automation from a signal)",
+}
+NON_PLUGINS = {
+    "carlabase", "vstbase", "libzynaddsubfxcore", "zynaddsubfxcore",
+    "hydrogenimport", "midiimport", "midiexport", "ladspabrowser",
+    "remotezynaddsubfx", "remotevstplugin",
 }
 
 
@@ -114,26 +139,32 @@ def classify_installed_plugins(
     known_instruments: set[str],
     known_effects: set[str],
 ) -> dict[str, list[str]]:
-    """Classify all installed plugin DLLs by comparing with known names.
+    """Classify the installed plugin DLLs.
 
-    Returns dict with keys "instruments", "effects", "unknown".
-    Unknown DLLs are custom/newer plugins the user added - they can be
-    used but their type (instrument vs effect) is not known from the
-    filename alone.
+    Returns dict with keys "instruments", "effects", "hosts", "other" and "unknown"
+    (unknown = custom or newer plugins whose type the file name doesn't tell).
+    Instruments and effects are reported by the name you use in the tools
+    (e.g. papu.dll -> "freeboy").
     """
     installed = get_installed_plugins()
-    result: dict[str, list[str]] = {"instruments": [], "effects": [], "unknown": []}
-    for name in sorted(installed):
-        if name.startswith("lib"):
-            continue  # support libraries, not plugins
-        if name in known_instruments or any(
-            name in aliases for aliases in PLUGIN_ALIASES.values()
-        ) and name in known_instruments:
+    dll_to_name = {}
+    for name, dlls in PLUGIN_ALIASES.items():
+        for dll in dlls:
+            dll_to_name.setdefault(dll, name)
+    result: dict[str, list[str]] = {
+        "instruments": [], "effects": [], "hosts": [], "other": [], "unknown": []}
+    for dll in sorted(installed):
+        name = dll_to_name.get(dll, dll)
+        if dll in NON_PLUGINS or dll.startswith("lib"):
+            result["other"].append(dll)
+        elif dll in PLUGIN_HOSTS:
+            result["hosts"].append(dll)
+        elif name in known_instruments:
             result["instruments"].append(name)
-        elif name in known_effects:
+        elif name in known_effects or dll in EXTRA_EFFECTS:
             result["effects"].append(name)
         else:
-            result["unknown"].append(name)
+            result["unknown"].append(dll)
     return result
 
 

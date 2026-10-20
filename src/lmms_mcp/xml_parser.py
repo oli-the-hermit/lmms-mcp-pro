@@ -5,6 +5,8 @@ import zlib
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from . import dialect as _dialect
+
 
 def _q_compress(data: bytes) -> bytes:
     """Replicate Qt's qCompress: 4-byte big-endian size header + zlib data."""
@@ -36,6 +38,21 @@ def _to_int(value, default: int = 0) -> int:
 
 def load_project(path: str | Path) -> ET.Element:
     """Load an LMMS project file (.mmpz or .mmp) and return the root element.
+
+    The tree is converted to the server's internal form (MIDI note numbers, see
+    dialect.py), whichever LMMS version wrote the file.
+    """
+    return load_project_with_dialect(path)[0]
+
+
+def load_project_with_dialect(path: str | Path) -> tuple[ET.Element, str]:
+    """Load a project, convert it to the internal form, and return (root, dialect on disk)."""
+    root = _parse_project_file(path)
+    return root, _dialect.to_internal(root)
+
+
+def _parse_project_file(path: str | Path) -> ET.Element:
+    """Parse a .mmp / .mmpz file as stored on disk.
 
     .mmpz files use Qt's qCompress format: 4-byte big-endian length header + zlib.
     We try plain XML first, then qUncompress, then raw zlib.
@@ -69,13 +86,23 @@ def load_project(path: str | Path) -> ET.Element:
     raise ValueError(f"Cannot parse {path}: not a valid LMMS project file")
 
 
-def save_project(path: str | Path, root: ET.Element, compressed: bool = True) -> None:
+def save_project(
+    path: str | Path,
+    root: ET.Element,
+    compressed: bool = True,
+    dialect: str = _dialect.LEGACY,
+) -> None:
     """Save an LMMS project element to a file.
 
     If compressed is True, writes .mmpz (Qt qCompress format).
     Otherwise writes plain .mmp XML.
+
+    The in-memory tree is not modified: a converted copy is written. ``dialect`` is
+    "legacy" (LMMS 1.2 format, opened by 1.2 and upgraded by 1.3: the default) or
+    "modern" (only for projects that were loaded from an LMMS 1.3 file).
     """
     path = Path(path)
+    root = _dialect.to_file(root, dialect)
     ET.indent(root, space="  ")
     xml_str = ET.tostring(root, encoding="unicode", xml_declaration=False)
     xml_str = '<?xml version="1.0"?>\n<!DOCTYPE lmms-project>\n' + xml_str
@@ -98,8 +125,8 @@ def create_empty_project(
     """Create a minimal empty LMMS project element tree."""
     root = ET.Element("lmms-project", {
         "version": "1.0",
-        "creator": "LMMS MCP Server",
-        "creatorversion": "1.2.0",
+        "creator": "LMMS",
+        "creatorversion": _dialect.LEGACY_CREATOR_VERSION,
         "type": "song",
     })
 
@@ -237,6 +264,15 @@ def track_type_name(type_id: int) -> str:
     return TRACK_TYPE_NAMES.get(type_id, f"Unknown({type_id})")
 
 
+#: One envelope/LFO block (elvol, elcut, elres) as LMMS saves it, at its neutral defaults.
+ENVELOPE_DEFAULTS = {
+    "pdel": "0", "att": "0", "hold": "0.5", "dec": "0.5", "sustain": "0.5", "rel": "0.1",
+    "amt": "0", "lshp": "0", "lpdel": "0", "latt": "0", "lspd": "0.1", "lamt": "0",
+    "x100": "0", "ctlenvamt": "0", "userwavefile": "",
+    "lspd_numerator": "4", "lspd_denominator": "4", "syncmode": "0",
+}
+
+
 def _make_instrument_track(
     parent: ET.Element,
     name: str,
@@ -259,7 +295,7 @@ def _make_instrument_track(
         "usemasterpitch": "1",
         "pitchrange": "1",
         "pitch": "0",
-        "basenote": "57",
+        "basenote": "69",   # internal form is MIDI: 69 = A4 (written as 57 for LMMS 1.2)
         "vol": str(volume),
     })
 
@@ -269,29 +305,19 @@ def _make_instrument_track(
     eldata = ET.SubElement(inst_track, "eldata", {
         "fres": "0.5", "ftype": "0", "fcut": "14000", "fwet": "0",
     })
-    ET.SubElement(eldata, "elvol", {
-        "lspd_denominator": "4", "sustain": "0.5",
-        "lspd_numerator": "4", "attack": "0", "decay": "0.5",
-        "hold": "0", "amount": "0",
-    })
-    ET.SubElement(eldata, "elcut", {
-        "lspd_denominator": "4", "sustain": "0.5",
-        "lspd_numerator": "4", "attack": "0", "decay": "0.5",
-        "hold": "0", "amount": "0",
-    })
-    ET.SubElement(eldata, "elres", {
-        "lspd_denominator": "4", "sustain": "0.5",
-        "lspd_numerator": "4", "attack": "0", "decay": "0.5",
-        "hold": "0", "amount": "0",
-    })
+    # Attribute names as LMMS saves them (EnvelopeAndLfoParameters::saveSettings).
+    # Envelope times are not linear: 0.5 is about a second, 1.0 several seconds.
+    for env_tag in ("elvol", "elcut", "elres"):
+        ET.SubElement(eldata, env_tag, ENVELOPE_DEFAULTS.copy())
 
     ET.SubElement(inst_track, "chordcreator", {
         "chord": "0", "chordrange": "1", "chord-enabled": "0",
     })
+    # InstrumentFunctionArpeggio::saveSettings names
     ET.SubElement(inst_track, "arpeggiator", {
-        "arp": "0", "arp-enabled": "0",
-        "arpcenter": "0", "arpdir": "0", "arprange": "1",
-        "arpspeed": "4", "arpType": "0",
+        "arp-enabled": "0", "arp": "0", "arprange": "1", "arptime": "200",
+        "arptime_numerator": "4", "arptime_denominator": "4", "syncmode": "0",
+        "arpgate": "100", "arpdir": "0", "arpmode": "0",
     })
     ET.SubElement(inst_track, "midiport", {
         "inputcontroller": "0", "fixedoutputvelocity": "-1",
@@ -997,16 +1023,49 @@ def set_instrument_params(
     if inst is None:
         raise ValueError(f"Track {track_index} has no instrument element")
 
+    # Plugin settings live on the plugin's own element (<instrument name="x"><x .../>),
+    # not on <instrument>: LMMS hands only that inner element to the plugin.
+    plugin_name = inst.get("name", "")
+    plugin = inst.find(plugin_name)
+    if plugin is None:
+        plugin = ET.SubElement(inst, plugin_name)
     applied = {}
     for key, value in params.items():
-        inst.set(key, str(value))
+        plugin.set(key, str(value))
         applied[key] = value
+    # undo the old (wrong) placement if a previous version put them on <instrument>
+    for key in params:
+        inst.attrib.pop(key, None)
+    if plugin_name == "zynaddsubfx":
+        # LMMS only applies the global Zyn knobs listed in "modifiedcontrollers"
+        # (their MIDI CC numbers, ZynAddSubFx.cpp loadSettings); list the ones we set.
+        ccs = [c for c in plugin.get("modifiedcontrollers", "").split(",") if c]
+        for key in params:
+            cc = ZYN_CONTROLLER_CC.get(key)
+            if cc is not None and str(cc) not in ccs:
+                ccs.append(str(cc))
+        plugin.set("modifiedcontrollers", "".join(f"{c}," for c in ccs))
 
     return {
         "track_index": track_index,
         "instrument": inst.get("name"),
         "applied": applied,
     }
+
+
+#: Global ZynAddSubFX knobs LMMS keeps on <zynaddsubfx> (0-127, 64 = neutral).
+ZYN_DEFAULT_ATTRS = {
+    "portamento": "0", "filterfreq": "64", "filterq": "64", "bandwidth": "64",
+    "fmgain": "127", "resbandwidth": "64", "rescenterfreq": "64",
+    "forwardmidicc": "1", "modifiedcontrollers": "",
+}
+
+
+#: Zyn global knob -> MIDI controller number (zynaddsubfx/src/globals.h)
+ZYN_CONTROLLER_CC = {
+    "portamento": 65, "filterfreq": 74, "filterq": 71, "bandwidth": 75,
+    "fmgain": 76, "rescenterfreq": 77, "resbandwidth": 78,
+}
 
 
 def embed_zyn_preset(
@@ -1060,10 +1119,29 @@ def embed_zyn_preset(
             f"'ZynAddSubFX-data'. Is this really a .xiz file?"
         )
 
-    # Remove any existing embedded data, then append the new one
-    for old in inst.findall("ZynAddSubFX-data"):
-        inst.remove(old)
-    inst.append(preset_root)
+    instrument_part = preset_root.find("INSTRUMENT")
+    if instrument_part is None:
+        raise ValueError("Preset has no <INSTRUMENT> section")
+
+    # LMMS passes <zynaddsubfx> (inside <instrument>) to the plugin, which loads the
+    # ZynAddSubFX-data inside it as a whole Zyn "master". A .xiz holds one instrument,
+    # so it goes into part 0 of a minimal master; Zyn fills everything else with
+    # defaults. (Verified by rendering in LMMS 1.2.2 and 1.3.0-alpha.2.)
+    zyn = inst.find("zynaddsubfx")
+    if zyn is None:
+        zyn = ET.SubElement(inst, "zynaddsubfx")
+    for key, value in ZYN_DEFAULT_ATTRS.items():
+        zyn.attrib.setdefault(key, value)
+    for holder in (inst, zyn):        # drop old data, including the old wrong placement
+        for old in holder.findall("ZynAddSubFX-data"):
+            holder.remove(old)
+    data = ET.SubElement(zyn, "ZynAddSubFX-data", {
+        "version-major": "2", "version-minor": "4", "version-revision": "1",
+        "ZynAddSubFX-author": "Nasca Octavian Paul",
+    })
+    part = ET.SubElement(ET.SubElement(data, "MASTER"), "PART", {"id": "0"})
+    ET.SubElement(part, "par_bool", {"name": "enabled", "value": "yes"})
+    part.append(instrument_part)
 
     # Extract patch name from preset INFO if available
     patch_name = preset_name

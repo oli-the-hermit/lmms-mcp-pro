@@ -20,7 +20,7 @@ from .xml_parser import (
     find_tracks,
     get_track_name,
     get_track_type,
-    load_project,
+    load_project_with_dialect,
     save_project,
     set_head_attribute,
     add_instrument_track,
@@ -39,6 +39,7 @@ class LMMSProject:
 
     def __init__(self) -> None:
         self._root: ET.Element | None = None
+        self._dialect: str = "legacy"   # file format to save in (see dialect.py)
         self._path: str = ""
         self._modified: bool = False
 
@@ -51,6 +52,11 @@ class LMMSProject:
     @property
     def path(self) -> str:
         return self._path
+
+    @property
+    def dialect(self) -> str:
+        """File format the project is saved in: "legacy" (LMMS 1.2, read by 1.3 too) or "modern"."""
+        return self._dialect
 
     @property
     def modified(self) -> bool:
@@ -73,11 +79,12 @@ class LMMSProject:
             master_pitch=master_pitch,
         )
         self._path = ""
+        self._dialect = "legacy"
         self._modified = True
 
     def load(self, path: str | Path) -> None:
         """Load a project from a .mmpz or .mmp file."""
-        self._root = load_project(path)
+        self._root, self._dialect = load_project_with_dialect(path)
         self._path = str(path)
         self._modified = False
 
@@ -94,7 +101,7 @@ class LMMSProject:
         if compressed is None:
             compressed = not str(save_path).lower().endswith(".mmp")
 
-        save_project(save_path, self._root, compressed=compressed)
+        save_project(save_path, self._root, compressed=compressed, dialect=self._dialect)
         self._path = str(save_path)
         self._modified = False
         return self._path

@@ -85,8 +85,14 @@ Key concepts:
 - Pattern tracks (Beat/Bassline) hold drum patterns in the song editor
 - The Mixer has channels (0=Master) where tracks route their audio
 - Time is measured in ticks: 192 ticks = 1 bar (4/4 time)
-- Notes use MIDI key numbers: 60=C4 (middle C), 69=A4
+- Notes use MIDI key numbers: 60=C4 (middle C), 69=A4. (Files are written in
+  LMMS's own numbering automatically; never subtract 12 yourself.)
 - Volume: 0-200 (100=normal), Panning: -100 to +100
+
+LMMS versions: projects are saved in LMMS 1.2 format, which LMMS 1.2 opens
+directly and LMMS 1.3 upgrades on load. Call get_lmms_info / list_available_plugins
+first and only use plugins listed as usable: compressor, dispersion,
+frequencyshifter, slewdistortion, slicert and xpressive exist only in LMMS 1.3.
 
 IMPORTANT - Instruments: Only use built-in LMMS instrument names (see the
 add_instrument_track tool description or lmms://reference/instruments).
@@ -106,10 +112,14 @@ then load one of ~950 factory presets via load_zyn_preset (browse with
 list_zyn_presets). Fine-tune with set_zyn_params.
 
 Effects: Add built-in effects to tracks or mixer channels with add_effect
-(see lmms://reference/effects for the full list). Typical chains:
-- Lead: delay -> reverbsc
-- Vocals: eq -> compressor -> reverbsc
-- Master bus: eq -> compressor -> stereoenhancer
+(see lmms://reference/effects for the full list). Every setting can be changed:
+describe_effect lists names, defaults and ranges; pass them to add_effect(params=...)
+or set_effect_params. "wet" is a dry/wet crossfade (1.0 = no dry signal); reverb
+and delay default to 0.3 / 0.4 on tracks, use 1.0 on a mixer channel used as a
+reverb bus. Typical chains (work in LMMS 1.2 and 1.3):
+- Lead: multitapecho -> reverbsc
+- Vocals: eq -> dynamicsprocessor -> reverbsc
+- Master bus: eq -> dynamicsprocessor -> stereoenhancer
 
 Default projects directory: {DEFAULT_PROJECTS_DIR}
 When saving a project, use this directory if no specific path is given.
@@ -743,12 +753,15 @@ def _resolve_fxchain_target(target_type: str, target_index: int) -> ET.Element:
     root = proj.root
     if target_type == "track":
         track = xml_parser.find_track_element(root, target_index)
-        inst_track = track.find("instrumenttrack")
-        if inst_track is None:
+        holder = track.find("instrumenttrack")
+        if holder is None:
+            holder = track.find("sampletrack")
+        if holder is None:
             raise ValueError(
-                f"Track {target_index} is not an instrument track"
+                f"Track {target_index} has no effect chain (only instrument and "
+                f"sample tracks do)"
             )
-        return inst_track
+        return holder
     if target_type == "mixer":
         song = root.find("song")
         mixer = song.find("mixer")
@@ -767,27 +780,34 @@ def add_effect(
     target_type: str,
     target_index: int,
     effect: str,
-    wet: float = 1.0,
+    wet: float | None = None,
     enabled: bool = True,
     position: int | None = None,
+    params: dict | None = None,
 ) -> str:
     """Add an effect to a track's or mixer channel's effect chain.
+
+    Every setting is written with its LMMS default; pass `params` to change some
+    right away (see describe_effect for names and ranges, set_effect_params later).
 
     Args:
         target_type: "track" or "mixer"
         target_index: Track index or mixer channel number (0=Master)
-        effect: Built-in LMMS effect name. Valid: amplifier, bassbooster,
-            bitcrush, compressor, crossovereq, delay, dispersion,
-            dualfilter, dynamicsprocessor, eq, flanger, frequencyshifter,
-            multitapecho, reverbsc, slewdistortion, stereoenhancer,
-            stereomatrix, waveshaper
-        wet: Wet/dry mix 0.0-1.0 (1.0=full effect)
+        effect: Built-in LMMS effect name. In LMMS 1.2 and 1.3: amplifier,
+            bassbooster, bitcrush, crossovereq, delay, dualfilter,
+            dynamicsprocessor, eq, flanger, multitapecho, reverbsc,
+            stereoenhancer, stereomatrix, waveshaper. LMMS 1.3 only:
+            compressor, dispersion, frequencyshifter, slewdistortion.
+        wet: Dry/wet crossfade 0.0-1.0. 1.0 = no dry signal. Default per effect:
+            reverbsc 0.3, delay 0.4, flanger 0.5, others 1.0. For a reverb on a
+            send/return mixer channel use 1.0.
         enabled: Whether the effect is active
         position: Chain position to insert at (None=end of chain)
+        params: Optional settings, e.g. {"size": 0.95, "color": 4000} for reverbsc
     """
     try:
         parent = _resolve_fxchain_target(target_type, target_index)
-        result = effects_mod.add_effect(parent, effect, wet, enabled, position)
+        result = effects_mod.add_effect(parent, effect, wet, enabled, position, params)
         available, reason = lmms_app.check_plugin_available(effect)
         if not available:
             # Custom effect plugin? (DLL exists but not in known list)
@@ -815,6 +835,55 @@ def add_effect(
             "valid_effects": sorted(effects_mod.KNOWN_EFFECTS.keys()),
             "recommendations": effects_mod.EFFECT_RECOMMENDATIONS,
         })
+
+
+@mcp.tool()
+def set_effect_params(
+    target_type: str,
+    target_index: int,
+    effect: str | int,
+    params: dict,
+) -> str:
+    """Change settings of an effect already on a track or mixer channel.
+
+    Values are checked against the ranges LMMS itself allows. Use describe_effect
+    to see every setting with its default and range.
+
+    Args:
+        target_type: "track" or "mixer"
+        target_index: Track index or mixer channel number
+        effect: Effect name (first match) or chain position (e.g. 0)
+        params: Settings to change, e.g.
+            reverbsc: {"size": 0.97, "color": 3000}  (dark, huge room)
+            delay: {"time": 0.75, "feedback": 0.5}   (seconds, 0-1)
+            multitapecho: {"steps": 8, "steplength": 500,
+                           "echo_gains_db": [-5, -9, -13, -17, -21, -25, -29, -33],
+                           "echo_lowpass": [2.2, 1.9, 1.6, 1.3, 1.0, 0.8, 0.5, 0.3]}
+            bitcrush: {"rate": 5000, "levels": 10}
+            Also "wet" (0-1) and "enabled" (true/false).
+    """
+    try:
+        parent = _resolve_fxchain_target(target_type, target_index)
+        return json.dumps(effects_mod.set_effect_params(parent, effect, params))
+    except (ValueError, TypeError) as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def describe_effect(effect: str) -> str:
+    """List every setting of an LMMS effect with its default, range and aliases.
+
+    Args:
+        effect: Effect plugin name, e.g. "reverbsc", "multitapecho", "delay"
+    """
+    name = effect.strip().lower()
+    if name not in effects_mod.KNOWN_EFFECTS:
+        return json.dumps({"error": f"Unknown effect '{effect}'",
+                           "valid_effects": sorted(effects_mod.KNOWN_EFFECTS)})
+    info = effects_mod.describe_params(name)
+    info["description"] = effects_mod.KNOWN_EFFECTS[name][0]
+    info["default_wet"] = effects_mod.DEFAULT_WET.get(name, 1.0)
+    return json.dumps(info)
 
 
 @mcp.tool()
@@ -971,18 +1040,9 @@ def set_zyn_params(
     if not params:
         return json.dumps({"error": "No parameters provided"})
     try:
+        # set_instrument_params writes the knobs on <zynaddsubfx> and lists their MIDI
+        # CC numbers in "modifiedcontrollers", which LMMS needs to apply them on load.
         result = xml_parser.set_instrument_params(proj.root, track_index, params)
-        # Mark modified controllers so LMMS applies them on load
-        inst_track = xml_parser.find_track_element(proj.root, track_index) \
-            .find("instrumenttrack/instrument")
-        controllers = {
-            "portamento": 1, "filterfreq": 2, "filterq": 3,
-            "bandwidth": 4, "fmgain": 5,
-            "rescenterfreq": 6, "resbandwidth": 7,
-        }
-        modified = sorted(controllers[p] for p in params if p in controllers)
-        inst_track.set("modifiedcontrollers", ",".join(map(str, modified)))
-        result["modifiedcontrollers"] = modified
         return json.dumps(result)
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
@@ -1118,17 +1178,31 @@ def list_available_plugins() -> str:
     """
     known_inst = set(KNOWN_INSTRUMENTS.keys())
     known_eff = set(effects_mod.KNOWN_EFFECTS.keys())
-    classified = lmms_app.classify_installed_plugins(known_inst, known_eff)
     exe = lmms_app.find_lmms_exe()
+    version = lmms_app.get_lmms_version()
+
+    def split(names: set[str]) -> dict:
+        usable, missing = [], {}
+        for name in sorted(names):
+            ok, reason = lmms_app.check_plugin_available(name)
+            if ok:
+                usable.append(name)
+            else:
+                missing[name] = ("LMMS 1.3+ only" if name in lmms_app.LMMS_13_ONLY
+                                 else reason)
+        return {"usable": usable, "not_in_your_lmms": missing}
+
+    classified = lmms_app.classify_installed_plugins(known_inst, known_eff)
     return json.dumps({
         "lmms_found": exe is not None,
-        "version": lmms_app.get_lmms_version(),
-        "built_in_instruments": sorted(known_inst),
-        "built_in_effects": sorted(known_eff),
+        "version": version,
+        "instruments": split(known_inst),
+        "effects": split(known_eff),
+        "plugin_hosts": {h: lmms_app.PLUGIN_HOSTS[h] for h in classified["hosts"]},
         "custom_plugins_unknown_type": classified["unknown"],
-        "note": "Custom plugins can be used by their DLL name in "
-                "add_instrument_track or add_effect. For VST .dll files "
-                "on disk use add_vst_track instead.",
+        "note": ("Use only 'usable' names: projects with other plugins open with "
+                 "missing-plugin warnings in this LMMS. Custom plugins can be used "
+                 "by their DLL name. For VST .dll files use add_vst_track."),
     }, indent=2)
 
 
@@ -1720,7 +1794,9 @@ def resource_effects() -> str:
                 "effects (ladspaeffect, lv2effect, vsteffect) depend on "
                 "system plugins and should be avoided.",
         "effects": [
-            {"name": name, "description": desc, "controls_node": node}
+            {"name": name, "description": desc, "controls_node": node,
+             "lmms_13_only": name in effects_mod.LMMS_13_ONLY,
+             "default_wet": effects_mod.DEFAULT_WET.get(name, 1.0)}
             for name, (desc, node) in sorted(KNOWN_EFFECTS.items())
         ],
         "recommendations_by_use_case": EFFECT_RECOMMENDATIONS,
